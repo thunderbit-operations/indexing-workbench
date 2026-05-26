@@ -76,6 +76,91 @@
     color: var(--muted);
   }
   main { padding: 20px 32px 60px; }
+  .today-batch {
+    background: linear-gradient(180deg, #fff3e8, #fff8f0);
+    border: 1px solid #f4c8a1;
+    border-radius: 10px;
+    padding: 16px 20px 18px;
+    margin-bottom: 28px;
+    box-shadow: 0 1px 3px rgba(255, 107, 53, 0.08);
+  }
+  .today-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .today-head h2 {
+    margin: 0;
+    font: 600 16px/1.2 -apple-system, system-ui, sans-serif;
+    color: var(--ink);
+  }
+  .today-date {
+    color: var(--muted);
+    font-weight: 400;
+    margin-left: 8px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .today-count {
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    padding: 2px 10px;
+    border-radius: 12px;
+    margin-left: 8px;
+    font-weight: 600;
+  }
+  .btn.primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+  .btn.primary:hover { background: #e8551c; border-color: #e8551c; }
+  .today-table {
+    width: 100%;
+    background: #fff;
+    border: 1px solid #f0d9bd;
+    border-radius: 6px;
+    border-collapse: separate;
+    border-spacing: 0;
+    overflow: hidden;
+  }
+  .today-table th {
+    background: #fff8f0;
+    color: #7a4a1a;
+  }
+  .today-table td.loc {
+    font-weight: 600;
+    font-size: 11px;
+    width: 70px;
+    color: #b5651d;
+  }
+  .today-empty {
+    padding: 24px;
+    background: #fff;
+    border: 1px dashed #f4c8a1;
+    border-radius: 6px;
+    color: var(--ink);
+    text-align: center;
+  }
+  .today-batch.done {
+    background: #f0f7f2;
+    border-color: #b8d8c1;
+  }
+  .pane-section-head {
+    margin: 24px 0 12px;
+  }
+  .pane-section-head h3 {
+    margin: 0 0 4px;
+    font: 600 14px/1.2 -apple-system, system-ui, sans-serif;
+  }
+  .pane-section-head .muted {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
   .pane { display: none; }
   .pane.active { display: block; }
   .pane-meta {
@@ -206,6 +291,26 @@
     border-color: #1d6f42;
   }
   .hidden { display: none !important; }
+  tr.checked-prior { display: none !important; }
+  tr.checked {
+    background: #f0f7f2 !important;
+    color: var(--muted);
+  }
+  tr.checked td.url a {
+    color: var(--muted);
+    text-decoration: line-through;
+  }
+  tr.checked td.actions::before {
+    content: "✓ ";
+    color: #1d6f42;
+    font-weight: 700;
+    margin-right: 4px;
+  }
+  tr.checked .btn.copy {
+    background: #e8f1ea;
+    color: #1d6f42;
+    border-color: #b8d8c1;
+  }
   .empty {
     padding: 40px;
     background: var(--card);
@@ -64545,16 +64650,39 @@ https://thunderbit.com/nl/tool/noon-scraper">Copy all 9 URLs</button>
         </div>
       </section>
   <footer>
-    Pick the top unfinished group inside the active tab → <b>Copy all 10 URLs</b> →
-    in Search Console (top right), paste each URL into the inspection search bar
-    and click <b>Request Indexing</b>. EN rebuilds nightly from the GSC scan;
-    other locales rebuild when the HEAD-filter rerun is triggered.
+    Pick any URL → click <b>Copy</b> (or <b>Copy all 10 URLs</b> on a group) → in Search Console (top right), paste each into the inspection search bar → click <b>Request Indexing</b>.
+    Copied URLs are marked <b>✓ checked</b> for the rest of the day and disappear automatically tomorrow.
+    EN data refreshes every morning after the 08:00 GSC scan; other locales refresh when their HEAD filter is rerun.
   </footer>
 </main>
 <script>
+  // ---------- check state (localStorage) ----------
+  // Key: "checked:" + URL  Value: ISO date string (YYYY-MM-DD)
+  // Today's checked rows stay visible (marked ✓); previous days' get hidden.
+  var TODAY = (function() {
+    var d = new Date();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return d.getFullYear() + '-' + m + '-' + day;
+  })();
+
+  function getCheckedDate(url) { return localStorage.getItem('checked:' + url); }
+  function markChecked(url) { localStorage.setItem('checked:' + url, TODAY); }
+
+  function applyCheckedRow(tr) {
+    var url = tr.getAttribute('data-url');
+    var d = getCheckedDate(url);
+    if (!d) return;
+    if (d === TODAY) {
+      tr.classList.add('checked');
+    } else {
+      tr.classList.add('checked-prior');
+    }
+  }
+
   function flashCopied(btn, label) {
     var orig = btn.textContent;
-    btn.textContent = label || '✓ Copied';
+    btn.textContent = label || '✓ Checked';
     btn.classList.add('copied');
     setTimeout(function() {
       btn.textContent = orig;
@@ -64562,13 +64690,62 @@ https://thunderbit.com/nl/tool/noon-scraper">Copy all 9 URLs</button>
     }, 1400);
   }
 
+  // Purge check entries older than 30 days — if a URL still isn't indexed
+  // a month later, let it resurface so the intern can resubmit it.
+  (function purgeOld() {
+    var cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 30);
+    var c = cutoff.getFullYear() + '-' +
+      String(cutoff.getMonth() + 1).padStart(2, '0') + '-' +
+      String(cutoff.getDate()).padStart(2, '0');
+    for (var i = localStorage.length - 1; i >= 0; i--) {
+      var k = localStorage.key(i);
+      if (k && k.indexOf('checked:') === 0) {
+        var v = localStorage.getItem(k);
+        if (v && v < c) localStorage.removeItem(k);
+      }
+    }
+  })();
+
+  // Initial sweep — apply persisted check state.
+  document.querySelectorAll('tr[data-url]').forEach(applyCheckedRow);
+
+  // Hide groups whose every row is checked-prior (their URLs are 'done').
+  document.querySelectorAll('.group').forEach(function(g) {
+    var rows = g.querySelectorAll('tbody tr');
+    var prior = g.querySelectorAll('tbody tr.checked-prior').length;
+    if (rows.length && prior === rows.length) {
+      g.classList.add('hidden');
+    }
+  });
+
+  // Recompute per-tab counts (subtract checked-prior rows).
+  document.querySelectorAll('.pane').forEach(function(pane) {
+    var loc = pane.getAttribute('data-locale');
+    var remaining = pane.querySelectorAll('tbody tr:not(.checked-prior)').length;
+    var badge = document.querySelector('.tab[data-locale="' + loc + '"] .tab-count');
+    if (badge) badge.textContent = remaining || '—';
+  });
+
   document.body.addEventListener('click', function(e) {
     var t = e.target;
     if (t.classList.contains('copy')) {
-      navigator.clipboard.writeText(t.getAttribute('data-copy')).then(function() { flashCopied(t); });
+      var url = t.getAttribute('data-copy');
+      navigator.clipboard.writeText(url).then(function() {
+        markChecked(url);
+        var tr = t.closest('tr[data-url]');
+        if (tr) tr.classList.add('checked');
+        flashCopied(t);
+      });
     } else if (t.classList.contains('copy-batch')) {
-      navigator.clipboard.writeText(t.getAttribute('data-batch-urls')).then(function() {
-        flashCopied(t, '✓ Copied all');
+      var urls = t.getAttribute('data-batch-urls');
+      navigator.clipboard.writeText(urls).then(function() {
+        urls.split('\n').forEach(function(u) { markChecked(u.trim()); });
+        var grp = t.closest('.group');
+        if (grp) grp.querySelectorAll('tbody tr[data-url]').forEach(function(tr) {
+          tr.classList.add('checked');
+        });
+        flashCopied(t, '✓ Checked all');
       });
     }
   });
