@@ -64669,6 +64669,24 @@ https://thunderbit.com/nl/template/redfin-scraper">Copy all 9 URLs</button>
   function getCheckedDate(url) { return localStorage.getItem('checked:' + url); }
   function markChecked(url) { localStorage.setItem('checked:' + url, TODAY); }
 
+  // ---------- click tracker (Cloudflare Worker) ----------
+  var TRACKER_URL = 'https://thunderbit-indexing-tracker.xin-li-296.workers.dev';
+
+  function trackClick(url, locale, kind) {
+    try {
+      fetch(TRACKER_URL + '/api/click', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url, locale: locale, kind: kind })
+      }).catch(function() {});
+    } catch (_) {}
+  }
+
+  function getLocale(el) {
+    var pane = el.closest('.pane');
+    return pane ? pane.getAttribute('data-locale') : 'en';
+  }
+
   function applyCheckedRow(tr) {
     var url = tr.getAttribute('data-url');
     var d = getCheckedDate(url);
@@ -64710,6 +64728,32 @@ https://thunderbit.com/nl/template/redfin-scraper">Copy all 9 URLs</button>
   // Initial sweep — apply persisted check state.
   document.querySelectorAll('tr[data-url]').forEach(applyCheckedRow);
 
+  // Hydrate checked state from server (cross-device sync).
+  (function hydrateFromServer() {
+    fetch(TRACKER_URL + '/api/checked-today')
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data || !data.urls) return;
+        var changed = false;
+        data.urls.forEach(function(url) {
+          if (getCheckedDate(url) === TODAY) return;
+          markChecked(url);
+          var sel = 'tr[data-url="' + url.replace(/"/g, '\\"') + '"]';
+          document.querySelectorAll(sel).forEach(function(tr) {
+            tr.classList.add('checked');
+          });
+          changed = true;
+        });
+        if (!changed) return;
+        document.querySelectorAll('.pane').forEach(function(pane) {
+          var loc = pane.getAttribute('data-locale');
+          var remaining = pane.querySelectorAll('tbody tr:not(.checked-prior)').length;
+          var badge = document.querySelector('.tab[data-locale="' + loc + '"] .tab-count');
+          if (badge) badge.textContent = remaining || '—';
+        });
+      }).catch(function() {});
+  })();
+
   // Hide groups whose every row is checked-prior (their URLs are 'done').
   document.querySelectorAll('.group').forEach(function(g) {
     var rows = g.querySelectorAll('tbody tr');
@@ -64736,11 +64780,17 @@ https://thunderbit.com/nl/template/redfin-scraper">Copy all 9 URLs</button>
         var tr = t.closest('tr[data-url]');
         if (tr) tr.classList.add('checked');
         flashCopied(t);
+        trackClick(url, getLocale(t), 'single');
       });
     } else if (t.classList.contains('copy-batch')) {
       var urls = t.getAttribute('data-batch-urls');
       navigator.clipboard.writeText(urls).then(function() {
-        urls.split('\n').forEach(function(u) { markChecked(u.trim()); });
+        var locale = getLocale(t);
+        urls.split('\n').forEach(function(u) {
+          var trimmed = u.trim();
+          markChecked(trimmed);
+          trackClick(trimmed, locale, 'batch');
+        });
         var grp = t.closest('.group');
         if (grp) grp.querySelectorAll('tbody tr[data-url]').forEach(function(tr) {
           tr.classList.add('checked');
